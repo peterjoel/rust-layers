@@ -214,8 +214,8 @@ impl TextureProgram {
                                     buffers: &Buffers,
                                     opacity: f32) {
         gl::uniform_1i(self.sampler_uniform, 0);
-        gl::uniform_matrix_4fv(self.modelview_uniform, false, &transform.to_array());
-        gl::uniform_matrix_4fv(self.projection_uniform, false, &projection_matrix.to_array());
+        gl::uniform_matrix_4fv(self.modelview_uniform, false, &transform.to_row_major_array());
+        gl::uniform_matrix_4fv(self.projection_uniform, false, &projection_matrix.to_row_major_array());
 
         let vertex_size = mem::size_of::<TextureVertex>();
 
@@ -226,7 +226,7 @@ impl TextureProgram {
 
         gl::uniform_matrix_4fv(self.texture_space_transform_uniform,
                                false,
-                               &texture_space_transform.to_array());
+                               &texture_space_transform.to_row_major_array());
 
         gl::uniform_1f(self.opacity_uniform, opacity);
     }
@@ -283,8 +283,8 @@ impl SolidColorProgram {
                                            transform: &Matrix4D<f32>,
                                            projection_matrix: &Matrix4D<f32>,
                                            color: &Color) {
-        gl::uniform_matrix_4fv(self.modelview_uniform, false, &transform.to_array());
-        gl::uniform_matrix_4fv(self.projection_uniform, false, &projection_matrix.to_array());
+        gl::uniform_matrix_4fv(self.modelview_uniform, false, &transform.to_row_major_array());
+        gl::uniform_matrix_4fv(self.projection_uniform, false, &projection_matrix.to_row_major_array());
         gl::uniform_4f(self.color_uniform,
                    color.r as GLfloat,
                    color.g as GLfloat,
@@ -567,15 +567,15 @@ impl RenderContext {
         // coordinates when dealing with GL_ARB_texture_rectangle.
         let mut texture_transform = Matrix4D::identity();
         if texture.flip == VerticalFlip {
-            texture_transform = texture_transform.scale(1.0, -1.0, 1.0);
+            texture_transform = texture_transform.pre_scaled(1.0, -1.0, 1.0);
         }
         if texture_coordinates_need_to_be_scaled_by_size {
-            texture_transform = texture_transform.scale(texture.size.width as f32,
-                                                        texture.size.height as f32,
-                                                        1.0);
+            texture_transform = texture_transform.pre_scaled(texture.size.width as f32,
+                                                             texture.size.height as f32,
+                                                             1.0);
         }
         if texture.flip == VerticalFlip {
-            texture_transform = texture_transform.translate(0.0, -1.0, 0.0);
+            texture_transform = texture_transform.pre_translated(0.0, -1.0, 0.0);
         }
 
         program.bind_uniforms_and_attributes(vertices,
@@ -618,7 +618,7 @@ impl RenderContext {
                        clip_rect: Option<Rect<f32>>,
                        gfx_context: &NativeDisplay) {
         let ts = layer.transform_state.borrow();
-        let transform = transform.mul(&ts.final_transform);
+        let transform = transform.pre_mul(&ts.final_transform);
         let background_color = *layer.background_color.borrow();
 
         // Create native textures for this layer
@@ -784,11 +784,12 @@ impl RenderContext {
                     } else {
                         // If the transform is 2d, invert it and back-transform
                         // the clip rect into world space.
-                        let transform = m.invert();
-                        let xform_2d = Matrix2D::new(transform.m11, transform.m12,
-                                                     transform.m21, transform.m22,
-                                                     transform.m41, transform.m42);
-                        Some(xform_2d.transform_rect(&cr))
+                        m.inverse().map(|transform| {
+                            let xform_2d = Matrix2D::row_major(transform.m11, transform.m12,
+                                                               transform.m21, transform.m22,
+                                                               transform.m41, transform.m42);
+                            xform_2d.transform_rect(&cr)
+                        })
                     }
 
                 });
@@ -827,7 +828,7 @@ pub fn render_scene<T>(root_layer: Rc<Layer<T>>,
     gl::depth_func(gl::LEQUAL);
 
     // Set up the initial modelview matrix.
-    let transform = Matrix4D::identity().scale(scene.scale.get(), scene.scale.get(), 1.0);
+    let transform = Matrix4D::identity().pre_scaled(scene.scale.get(), scene.scale.get(), 1.0);
     let projection = create_ortho(&scene.viewport.size.to_untyped());
 
     // Build the list of render items
